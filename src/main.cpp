@@ -1056,8 +1056,10 @@ int64_t GetProofOfWorkReward(int64_t nFees)
 
 }
 
+
+
 // miner's coin stake reward based on coin age spent (coin-days)
-int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees)
+int64_t GetProofOfStakeRewardV1(int64_t nCoinAge, int64_t nFees)
 {
     int64_t nSubsidy = nCoinAge * COIN_YEAR_REWARD * 33 / (365 * 33 + 8);
 
@@ -1065,6 +1067,79 @@ int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees)
         printf("GetProofOfStakeReward(): create=%s nCoinAge=%"PRId64"\n", FormatMoney(nSubsidy).c_str(), nCoinAge);
 
     return nSubsidy + nFees;
+}
+
+// miner's coin stake reward based on coin age spent (coin-days)
+int64_t GetProofOfStakeRewardV2(int64_t nCoinAge, int64_t nFees)
+{
+    int64_t nSubsidy = nCoinAge * COIN_YEAR_REWARD * 33 / (365 * 33 + 8) / 2;
+
+    if (fDebug && GetBoolArg("-printcreation"))
+        printf("GetProofOfStakeReward(): create=%s nCoinAge=%"PRId64"\n", FormatMoney(nSubsidy).c_str(), nCoinAge);
+
+    return nSubsidy + nFees;
+}
+
+// miner's coin stake reward based on coin age spent (coin-days)
+int64_t GetProofOfStakeRewardV3(int64_t nCoinAge, int64_t nFees)
+{
+    int64_t nSubsidy = nCoinAge * COIN_YEAR_REWARD * 33 / (365 * 33 + 8) / 4;
+
+    if (fDebug && GetBoolArg("-printcreation"))
+        printf("GetProofOfStakeReward(): create=%s nCoinAge=%"PRId64"\n", FormatMoney(nSubsidy).c_str(), nCoinAge);
+
+    return nSubsidy + nFees;
+}
+
+// miner's coin stake reward based on coin age spent (coin-days)
+int64_t GetProofOfStakeRewardV4(int64_t nCoinAge, int64_t nFees)
+{
+    int64_t nSubsidy = nCoinAge * COIN_YEAR_REWARD * 33 / (365 * 33 + 8) / 8;
+
+    if (fDebug && GetBoolArg("-printcreation"))
+        printf("GetProofOfStakeReward(): create=%s nCoinAge=%"PRId64"\n", FormatMoney(nSubsidy).c_str(), nCoinAge);
+
+    return nSubsidy + nFees;
+}
+
+// miner's coin stake reward based on coin age spent (coin-days)
+int64_t GetProofOfStakeRewardV5(int64_t nCoinAge, int64_t nFees)
+{
+    int64_t nSubsidy = nCoinAge * COIN_YEAR_REWARD * 33 / (365 * 33 + 8) / 16;
+
+    if (fDebug && GetBoolArg("-printcreation"))
+        printf("GetProofOfStakeReward(): create=%s nCoinAge=%"PRId64"\n", FormatMoney(nSubsidy).c_str(), nCoinAge);
+
+    return nSubsidy + nFees;
+}
+
+// miner's coin stake reward based on coin age spent (coin-days)
+int64_t GetProofOfStakeRewardV6(int64_t nCoinAge, int64_t nFees)
+{
+    int64_t nSubsidy = nCoinAge * COIN_YEAR_REWARD * 33 / (365 * 33 + 8) / 32;
+
+    if (fDebug && GetBoolArg("-printcreation"))
+        printf("GetProofOfStakeReward(): create=%s nCoinAge=%"PRId64"\n", FormatMoney(nSubsidy).c_str(), nCoinAge);
+
+    return nSubsidy + nFees;
+}
+int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees, unsigned int nTime)
+{
+	int64_t nReward = 0;
+	if(nTime > FORK_TIME5)
+		nReward = GetProofOfStakeRewardV6((int64_t)nCoinAge, nFees);
+	else if(nTime > FORK_TIME4)
+		nReward = GetProofOfStakeRewardV5((int64_t)nCoinAge, nFees);
+	else if(nTime > FORK_TIME3)
+		nReward = GetProofOfStakeRewardV4((int64_t)nCoinAge, nFees);
+	else if(nTime > FORK_TIME2)
+		nReward = GetProofOfStakeRewardV3((int64_t)nCoinAge, nFees);
+	else if(nTime > FORK_TIME)
+		nReward = GetProofOfStakeRewardV2((int64_t)nCoinAge, nFees);
+    else
+	   nReward = GetProofOfStakeRewardV1((int64_t)nCoinAge, nFees);
+    
+	return nReward;
 }
 
 static const int64_t nTargetTimespan = 20 * 60;  // Retarget Difficulty every 20 minutes
@@ -1652,7 +1727,7 @@ bool CBlock::ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck)
         if (!vtx[1].GetCoinAge(txdb, nCoinAge))
             return error("ConnectBlock() : %s unable to get coin age for coinstake", vtx[1].GetHash().ToString().substr(0,10).c_str());
 
-        int64_t nCalculatedStakeReward = GetProofOfStakeReward(nCoinAge, nFees);
+        int64_t nCalculatedStakeReward = GetProofOfStakeReward(nCoinAge, nFees, vtx[1].nTime);
 
         if (nStakeReward > nCalculatedStakeReward)
             return DoS(100, error("ConnectBlock() : coinstake pays too much(actual=%"PRId64" vs calculated=%"PRId64")", nStakeReward, nCalculatedStakeReward));
@@ -2381,6 +2456,11 @@ bool ProcessBlock(CNode* pfrom, CBlock* pblock)
 
     printf("ProcessBlock: ACCEPTED\n");
 
+    // If turned on MultiSend will send a transaction (or more) on the 30th confirmation of a stake
+   if (pwalletMain->fMultiSend)
+       if (!pwalletMain->MultiSend() )
+           printf("ERROR While trying to use MultiSend \n");
+
     // ppcoin: if responsible for sync-checkpoint send it
     if (pfrom && !CSyncCheckpoint::strMasterPrivKey.empty())
         Checkpoints::SendSyncCheckpoint(Checkpoints::AutoSelectSyncCheckpoint());
@@ -2924,7 +3004,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         CAddress addrFrom;
         uint64_t nNonce = 1;
         vRecv >> pfrom->nVersion >> pfrom->nServices >> nTime >> addrMe;
-        if (pfrom->nVersion < MIN_PROTO_VERSION)
+        if (pfrom->nVersion < (GetAdjustedTime() > FORK_TIME5 ? MIN_PROTO_VERSION_FORK : MIN_PROTO_VERSION))
         {
             // Since February 20, 2012, the protocol is initiated at version 209,
             // and earlier versions are no longer supported
@@ -3002,8 +3082,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
         static int nAskedForBlocks = 0;
         if (!pfrom->fClient && !pfrom->fOneShot &&
             (pfrom->nStartingHeight > (nBestHeight - 144)) &&
-            (pfrom->nVersion < NOBLKS_VERSION_START ||
-             pfrom->nVersion >= NOBLKS_VERSION_END) &&
+            (pfrom->nVersion < NOBLKS_VERSION_START || pfrom->nVersion > (GetAdjustedTime() > FORK_TIME5 ? NOBLKS_VERSION_END_FORK : NOBLKS_VERSION_END)) &&
              (nAskedForBlocks < 1 || vNodes.size() <= 1))
         {
             nAskedForBlocks++;

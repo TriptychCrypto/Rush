@@ -1363,7 +1363,7 @@ bool CWallet::SelectCoinsSimple(int64_t nTargetValue, unsigned int nSpendTime, i
     return true;
 }
 
-bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, const CCoinControl* coinControl)
+bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, int nSplitBlock, const CCoinControl* coinControl)
 {
     int64_t nValue = 0;
     BOOST_FOREACH (const PAIRTYPE(CScript, int64_t)& s, vecSend)
@@ -1383,6 +1383,8 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
         CTxDB txdb("r");
         {
             nFeeRet = nTransactionFee;
+			if(fSplitBlock) 
+				nFeeRet = 1 * COIN;
             while (true)
             {
                 wtxNew.vin.clear();
@@ -1391,19 +1393,40 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
 
                 int64_t nTotalValue = nValue + nFeeRet;
                 double dPriority = 0;
+				if( nSplitBlock < 1 )  
+					nSplitBlock = 1;				
                 // vouts to the payees
+				if (!fSplitBlock) 
+				{ 
+				BOOST_FOREACH (const PAIRTYPE(CScript, int64_t)& s, vecSend) 
+					wtxNew.vout.push_back(CTxOut(s.second, s.first)); 
+				} 
+				else				
                 BOOST_FOREACH (const PAIRTYPE(CScript, int64_t)& s, vecSend)
-                    wtxNew.vout.push_back(CTxOut(s.second, s.first));
+				{ 
+                    for(int nCount = 0; nCount < nSplitBlock; nCount++) 
+					{ 
+						if(nCount == nSplitBlock -1) 
+						{ 
+							uint64_t nRemainder = s.second % nSplitBlock; 
+							wtxNew.vout.push_back(CTxOut((s.second / nSplitBlock) + nRemainder, s.first)); 
+						} 
+						else 
+							wtxNew.vout.push_back(CTxOut(s.second / nSplitBlock, s.first));
+					}
+				}
 
                 // Choose coins to use
                 set<pair<const CWalletTx*,unsigned int> > setCoins;
                 int64_t nValueIn = 0;
                 if (!SelectCoins(nTotalValue, wtxNew.nTime, setCoins, nValueIn, coinControl))
                     return false;
+				CTxDestination utxoAddress;				
                 BOOST_FOREACH(PAIRTYPE(const CWalletTx*, unsigned int) pcoin, setCoins)
                 {
                     int64_t nCredit = pcoin.first->vout[pcoin.second].nValue;
                     dPriority += (double)nCredit * pcoin.first->GetDepthInMainChain();
+					ExtractDestination(pcoin.first->vout[pcoin.second].scriptPubKey, utxoAddress);					
                 }
 
                 int64_t nChange = nValueIn - nValue - nFeeRet;
@@ -1425,7 +1448,9 @@ bool CWallet::CreateTransaction(const vector<pair<CScript, int64_t> >& vecSend, 
                     CScript scriptChange;
 
                     // coin control: send change to custom address
-                    if (coinControl && !boost::get<CNoDestination>(&coinControl->destChange))
+					if (coinControl && coinControl->fReturnChange == true)
+						scriptChange.SetDestination(utxoAddress);
+                    else if (coinControl && !boost::get<CNoDestination>(&coinControl->destChange))
                         scriptChange.SetDestination(coinControl->destChange);
 
                     // no coin control: send change to newly generated address
@@ -1493,7 +1518,7 @@ bool CWallet::CreateTransaction(CScript scriptPubKey, int64_t nValue, CWalletTx&
 {
     vector< pair<CScript, int64_t> > vecSend;
     vecSend.push_back(make_pair(scriptPubKey, nValue));
-    return CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, coinControl);
+    return CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, 1, coinControl);
 }
 
 // NovaCoin: get current stake weight
@@ -1551,6 +1576,21 @@ bool CWallet::GetStakeWeight(const CKeyStore& keystore, uint64_t& nMinWeight, ui
     return true;
 }
 
+bool CWallet::GetStakeWeightFromValue(const int64_t& nTime, const int64_t& nValue, uint64_t& nWeight)
+{
+    // This is a negative value when there is no weight. But set it to zero
+    // so the user is not confused. Used in reporting in Coin Control.
+    // Descisions based on this function should be used with care.
+    int64_t nTimeWeight = GetWeight(nTime, (int64_t)GetTime());
+    if (nTimeWeight < 0 )
+            nTimeWeight=0;
+
+    CBigNum bnCoinDayWeight = CBigNum(nValue) * nTimeWeight / COIN / (24 * 60 * 60);
+    nWeight = bnCoinDayWeight.getuint64();
+
+    return true;
+}
+  
 bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int64_t nSearchInterval, int64_t nFees, CTransaction& txNew, CKey& key)
 {
     CBlockIndex* pindexPrev = pindexBest;
@@ -1674,8 +1714,15 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
                 vwtxPrev.push_back(pcoin.first);
                 txNew.vout.push_back(CTxOut(0, scriptPubKeyOut));
 
-                if (GetWeight(block.GetBlockTime(), (int64_t)txNew.nTime) < nStakeSplitAge)
-                    txNew.vout.push_back(CTxOut(0, scriptPubKeyOut)); //split stake
+				uint64_t nCoinAge;
+				CTxDB txdb("r");
+				if (txNew.GetCoinAge(txdb, nCoinAge))
+				{
+					uint64_t nTotalSize = pcoin.first->vout[pcoin.second].nValue + GetProofOfStakeReward(nCoinAge, 0, txNew.nTime);
+					if (nTotalSize / 2 > nStakeSplitThreshold * COIN)
+						txNew.vout.push_back(CTxOut(0, scriptPubKeyOut)); //split stake
+				}
+
                 if (fDebug && GetBoolArg("-printcoinstake"))
                     printf("CreateCoinStake : added kernel type=%d\n", whichType);
                 fKernelFound = true;
@@ -1728,7 +1775,7 @@ bool CWallet::CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int
         if (!txNew.GetCoinAge(txdb, nCoinAge))
             return error("CreateCoinStake : failed to calculate coin age");
 
-        int64_t nReward = GetProofOfStakeReward(nCoinAge, nFees);
+        int64_t nReward = GetProofOfStakeReward(nCoinAge, nFees, txNew.nTime);
         if (nReward <= 0)
             return false;
 
@@ -2253,7 +2300,7 @@ set< set<CTxDestination> > CWallet::GetAddressGroupings()
 }
 
 // ppcoin: check 'spent' consistency between wallet and txindex
-// ppcoin: fix wallet spent state according to txindex
+// ppcoin: fix wallet spent state according to txindex 
 void CWallet::FixSpentCoins(int& nMismatchFound, int64_t& nBalanceInQuestion, bool fCheckOnly)
 {
     nMismatchFound = 0;
@@ -2268,15 +2315,15 @@ void CWallet::FixSpentCoins(int& nMismatchFound, int64_t& nBalanceInQuestion, bo
     CTxDB txdb("r");
     BOOST_FOREACH(CWalletTx* pcoin, vCoins)
     {
-        // Find the corresponding transaction index
+    	        // Find the corresponding transaction index
         CTxIndex txindex;
-        if (!txdb.ReadTxIndex(pcoin->GetHash(), txindex))
+         if (!txdb.ReadTxIndex(pcoin->GetHash(), txindex))
             continue;
         for (unsigned int n=0; n < pcoin->vout.size(); n++)
         {
             if (IsMine(pcoin->vout[n]) && pcoin->IsSpent(n) && (txindex.vSpent.size() <= n || txindex.vSpent[n].IsNull()))
             {
-                printf("FixSpentCoins found lost coin %s BC %s[%d], %s\n",
+                printf("FixSpentCoins found lost coin %s 1337 %s[%d], %s\n",
                     FormatMoney(pcoin->vout[n].nValue).c_str(), pcoin->GetHash().ToString().c_str(), n, fCheckOnly? "repair not attempted" : "repairing");
                 nMismatchFound++;
                 nBalanceInQuestion += pcoin->vout[n].nValue;
@@ -2288,7 +2335,7 @@ void CWallet::FixSpentCoins(int& nMismatchFound, int64_t& nBalanceInQuestion, bo
             }
             else if (IsMine(pcoin->vout[n]) && !pcoin->IsSpent(n) && (txindex.vSpent.size() > n && !txindex.vSpent[n].IsNull()))
             {
-                printf("FixSpentCoins found spent coin %s BC %s[%d], %s\n",
+                printf("FixSpentCoins found spent coin %s 1337 %s[%d], %s\n",
                     FormatMoney(pcoin->vout[n].nValue).c_str(), pcoin->GetHash().ToString().c_str(), n, fCheckOnly? "repair not attempted" : "repairing");
                 nMismatchFound++;
                 nBalanceInQuestion += pcoin->vout[n].nValue;
@@ -2298,7 +2345,7 @@ void CWallet::FixSpentCoins(int& nMismatchFound, int64_t& nBalanceInQuestion, bo
                     pcoin->WriteToDisk();
                 }
             }
-        }
+		}
     }
 }
 
@@ -2441,4 +2488,81 @@ void CWallet::GetKeyBirthTimes(std::map<CKeyID, int64_t> &mapKeyBirth) const {
     // Extract block timestamps for those keys
     for (std::map<CKeyID, CBlockIndex*>::const_iterator it = mapKeyFirstBlock.begin(); it != mapKeyFirstBlock.end(); it++)
         mapKeyBirth[it->first] = it->second->nTime - 7200; // block times can be 2h off
+}
+
+bool CWallet::MultiSend()
+{
+    if ( IsInitialBlockDownload() || IsLocked() )
+        return false;
+    int64_t nAmount = 0;
+
+    {
+        LOCK(cs_wallet);
+        std::vector<COutput> vCoins;
+        AvailableCoins(vCoins);
+        
+         BOOST_FOREACH(const COutput& out, vCoins)
+        {
+            CTxDestination address;
+            if(!ExtractDestination(out.tx->vout[out.i].scriptPubKey, address)) continue;
+            if (nBestHeight <= nLastMultiSendHeight ) 
+                    return false;   
+            if (out.tx->IsCoinStake() && out.tx->GetBlocksToMaturity() == 0  && out.tx->GetDepthInMainChain() == nCoinbaseMaturity+20)
+            {
+                //Disabled Addresses won't send MultiSend transactions
+                if(vDisabledAddresses.size() > 0)
+                {
+                    for(unsigned int i = 0; i < vDisabledAddresses.size(); i++)
+                    {
+                        if(vDisabledAddresses[i] == CBitcoinAddress(address).ToString())
+                        {
+                            return false;
+                        }
+                    }
+                }
+                
+                // create new coin control, populate it with the selected utxo, create sending vector
+                CCoinControl* cControl = new CCoinControl();
+                uint256 txhash = out.tx->GetHash();
+                COutPoint outpt(txhash, out.i);
+                cControl->Select(outpt);    
+                CWalletTx wtx;
+                cControl->fReturnChange = true;
+                CReserveKey keyChange(this); // this change address does not end up being used, because change is returned with coin control switch
+                int64_t nFeeRet = 0;
+                vector<pair<CScript, int64_t> > vecSend;
+                    
+                // loop through multisend vector and add amounts and addresses to the sending vector
+                for(unsigned int i = 0; i < vMultiSend.size(); i++)
+                {
+                    // MultiSend vector is a pair of 1)Address as a std::string  2) Percent of stake to send as an int
+                    nAmount = ( ( out.tx->GetCredit() - out.tx->GetDebit() ) * vMultiSend[i].second )/100;
+                    CBitcoinAddress strAddSend(vMultiSend[i].first);
+                    CScript scriptPubKey;
+                        scriptPubKey.SetDestination(strAddSend.Get());
+                    vecSend.push_back(make_pair(scriptPubKey, nAmount));
+                }
+                //make sure splitblock is off
+                fSplitBlock = false;
+                
+                // Create the transaction and commit it to the network
+                bool fCreated = CreateTransaction(vecSend, wtx, keyChange, nFeeRet, 1, cControl);
+                if (!fCreated)
+                    printf("MultiSend createtransaction failed");
+                if(!CommitTransaction(wtx, keyChange))
+                    printf("MultiSend transaction commit failed");
+                else
+                    fMultiSendNotify = true;
+                delete cControl;
+                
+                //write nLastMultiSendHeight to DB
+                CWalletDB walletdb(strWalletFile);
+                nLastMultiSendHeight = nBestHeight;
+                if(!walletdb.WriteMSettings(fMultiSend, nLastMultiSendHeight))
+                    printf("Failed to write MultiSend setting to DB");
+                
+            }
+        }
+    }
+    return true;
 }

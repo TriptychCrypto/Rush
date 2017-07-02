@@ -3,7 +3,7 @@
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include "irc.h"
+
 #include "db.h"
 #include "net.h"
 #include "init.h"
@@ -57,7 +57,7 @@ static bool vfLimited[NET_MAX] = {};
 static CNode* pnodeLocalHost = NULL;
 CAddress addrSeenByPeer(CService("0.0.0.0", 0), nLocalServices);
 uint64_t nLocalHostNonce = 0;
-array<int, THREAD_MAX> vnThreadsRunning;
+boost::array<int, THREAD_MAX> vnThreadsRunning;
 static std::vector<SOCKET> vhListenSocket;
 CAddrMan addrman;
 
@@ -1015,15 +1015,19 @@ void ThreadMapPort2(void* parg)
     const char * minissdpdpath = 0;
     struct UPNPDev * devlist = 0;
     char lanaddr[64];
-
-#ifndef UPNPDISCOVER_SUCCESS
+	
+    #ifndef UPNPDISCOVER_SUCCESS
     /* miniupnpc 1.5 */
-    devlist = upnpDiscover(2000, multicastif, minissdpdpath, 0);
-#else
+        devlist = upnpDiscover(2000, multicastif, minissdpdpath, 0);
+    #elif MINIUPNPC_API_VERSION < 14
     /* miniupnpc 1.6 */
-    int error = 0;
-    devlist = upnpDiscover(2000, multicastif, minissdpdpath, 0, 0, &error);
-#endif
+        int error = 0;
+	devlist = upnpDiscover(2000, multicastif, minissdpdpath, 0, 0, &error);
+    #else
+    /* miniupnpc 1.9 */
+        int error = 0;
+	devlist = upnpDiscover(2000, multicastif, minissdpdpath, 0, 0, 2, &error);
+    #endif
 
     struct UPNPUrls urls;
     struct IGDdatas data;
@@ -1132,23 +1136,12 @@ void MapPort()
 // The first name is used as information source for addrman.
 // The second name should resolve to a list of seed addresses.
 static const char *strDNSSeed[][2] = {
-		    	{"2.99.252.129", "2.99.252.129"},
-		    	{"46.236.161.66", "46.236.161.66"},
-				{"91.220.151.240", "91.220.151.240"},
-		    	{"96.237.118.230", "96.237.118.230"},
-				{"68.58.2.117", "68.58.2.117"},
-		    	{"5.196.82.175", "5.196.82.175"},
-				{"113.148.158.231", "113.148.158.231"},
-				{"72.128.84.115", "72.128.84.115"},
-			    {"85.25.200.157", "85.25.200.157"},
-			    {"198.199.95.130", "198.199.95.130"},
-				{"194.135.93.51", "194.135.93.51"},	
-		    	{"76.106.178.142", "76.106.178.142"},
-				{"80.213.229.237", "80.213.229.237"},
-				{"108.61.189.196", "108.61.189.196"},
-				{"1337node1.shrooms.pw", "1337node1.shrooms.pw"},
-				{"1337node2.shrooms.pw", "1337node2.shrooms.pw"},
-				{"1337node3.shrooms.pw", "1337node3.shrooms.pw"},
+		    	{"node1", "node1.stakeforum.com"},
+		    	{"node2", "node2.stakeforum.com"},
+			{"node3", "node3.stakeforum.com"},
+		    	{"node4", "node4.stakeforum.com"},
+
+
 };
 
 void ThreadDNSAddressSeed(void* parg)
@@ -1853,10 +1846,7 @@ void StartNode(void* parg)
     if (fUseUPnP)
         MapPort();
 
-    // Get addresses from IRC and advertise ours
-    if (!NewThread(ThreadIRCSeed, NULL))
-        printf("Error: NewThread(ThreadIRCSeed) failed\n");
-
+    
     // Send and receive from sockets, accept connections
     if (!NewThread(ThreadSocketHandler, NULL))
         printf("Error: NewThread(ThreadSocketHandler) failed\n");

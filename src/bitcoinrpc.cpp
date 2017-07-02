@@ -306,6 +306,9 @@ static const CRPCCommand vRPCCommands[] =
     { "resendtx",               &resendtx,               false,  true},
     { "makekeypair",            &makekeypair,            false,  true},
     { "sendalert",              &sendalert,              false,  false},
+	{ "setstakesplitthreshold",  &setstakesplitthreshold,  false,  false},
+	{ "getstakesplitthreshold",  &getstakesplitthreshold,  false,  false},
+    { "multisend",              &multisend,                 false,  false },	
 };
 
 CRPCTable::CRPCTable()

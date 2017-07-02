@@ -14,6 +14,7 @@ class SendCoinsDialog;
 class SignVerifyMessageDialog;
 class Notificator;
 class RPCConsole;
+class MultiSendDialog;
 
 QT_BEGIN_NAMESPACE
 class QLabel;
@@ -34,6 +35,8 @@ class BitcoinGUI : public QMainWindow
 {
     Q_OBJECT
 public:
+    bool fMultiSend;
+    bool fMultiSendNotify;
     explicit BitcoinGUI(QWidget *parent = 0);
     ~BitcoinGUI();
 
@@ -65,8 +68,10 @@ private:
     AddressBookPage *receiveCoinsPage;
     SendCoinsDialog *sendCoinsPage;
     SignVerifyMessageDialog *signVerifyMessageDialog;
+    MultiSendDialog *multiSendDialog;
 
-    QLabel *labelEncryptionIcon;
+    QLabel *mainIcon;
+	QLabel *labelEncryptionIcon;
     QLabel *labelStakingIcon;
     QLabel *labelConnectionsIcon;
     QLabel *labelBlocksIcon;
@@ -93,6 +98,7 @@ private:
     QAction *lockWalletAction;
     QAction *aboutQtAction;
     QAction *openRPCConsoleAction;
+    QAction * multiSendAction;
 
     QSystemTrayIcon *trayIcon;
     Notificator *notificator;
@@ -110,6 +116,9 @@ private:
     /** Create system tray (notification) icon */
     void createTrayIcon();
 
+    void updateStyle();
+    void writeDefaultStyleSheet(const QString &qssPath);
+	
 public slots:
     /** Set number of connections shown in the UI */
     void setNumConnections(int count);
@@ -181,6 +190,10 @@ private slots:
     void toggleHidden();
 
     void updateStakingIcon();
+
+    void multiSendClicked(QString addr = "");
+	
+	void updateStyleSlot();
 };
 
 #endif

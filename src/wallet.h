@@ -86,14 +86,25 @@ public:
 
     bool fFileBacked;
     std::string strWalletFile;
-
-    std::set<int64_t> setKeyPool;
+	bool fSplitBlock;
+	uint64_t nStakeSplitThreshold;
+    
+	std::set<int64_t> setKeyPool;
     std::map<CKeyID, CKeyMetadata> mapKeyMetadata;
 
 
     typedef std::map<unsigned int, CMasterKey> MasterKeyMap;
     MasterKeyMap mapMasterKeys;
     unsigned int nMasterKeyMaxID;
+
+    //MultiSend
+    std::vector<std::pair<std::string, int> > vMultiSend;
+    bool fMultiSend;
+    bool fMultiSendNotify;
+    std::string strMultiSendChangeAddress;
+    int nLastMultiSendHeight;
+    std::vector<std::string> vDisabledAddresses;
+	
 
     CWallet()
     {
@@ -103,6 +114,16 @@ public:
         nMasterKeyMaxID = 0;
         pwalletdbEncryption = NULL;
         nOrderPosNext = 0;
+		fSplitBlock = false;
+		nStakeSplitThreshold = 10000000;
+
+        //MultiSend
+        vMultiSend.clear();
+        fMultiSend = false;
+        fMultiSendNotify = false;
+        strMultiSendChangeAddress = "";
+        nLastMultiSendHeight = 0;
+        vDisabledAddresses.clear();
     }
     CWallet(std::string strWalletFileIn)
     {
@@ -113,6 +134,16 @@ public:
         nMasterKeyMaxID = 0;
         pwalletdbEncryption = NULL;
         nOrderPosNext = 0;
+        fSplitBlock = false;	
+		nStakeSplitThreshold = 10000000;
+
+        //MultiSend
+        vMultiSend.clear();
+        fMultiSend = false;
+        fMultiSendNotify = false;
+        strMultiSendChangeAddress = "";
+        nLastMultiSendHeight = 0;
+        vDisabledAddresses.clear();
     }
 
     std::map<uint256, CWalletTx> mapWallet;
@@ -184,12 +215,14 @@ public:
     int64_t GetImmatureBalance() const;
     int64_t GetStake() const;
     int64_t GetNewMint() const;
-    bool CreateTransaction(const std::vector<std::pair<CScript, int64_t> >& vecSend, CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, const CCoinControl *coinControl=NULL);
+    bool CreateTransaction(const std::vector<std::pair<CScript, int64_t> >& vecSend, CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, int nSplitBlock, const CCoinControl *coinControl=NULL);
     bool CreateTransaction(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNew, CReserveKey& reservekey, int64_t& nFeeRet, const CCoinControl *coinControl=NULL);
     bool CommitTransaction(CWalletTx& wtxNew, CReserveKey& reservekey);
+    bool MultiSend();
 
     bool GetStakeWeight(const CKeyStore& keystore, uint64_t& nMinWeight, uint64_t& nMaxWeight, uint64_t& nWeight);
     bool CreateCoinStake(const CKeyStore& keystore, unsigned int nBits, int64_t nSearchInterval, int64_t nFees, CTransaction& txNew, CKey& key);
+	bool GetStakeWeightFromValue(const int64_t& nTime, const int64_t& nValue, uint64_t& nWeight);
 
     std::string SendMoney(CScript scriptPubKey, int64_t nValue, CWalletTx& wtxNew, bool fAskFee=false);
     std::string SendMoneyToDestination(const CTxDestination &address, int64_t nValue, CWalletTx& wtxNew, bool fAskFee=false);
